@@ -109,7 +109,7 @@ function get_bank_statement() {
 			'data_extrato', strftime('%Y-%m-%dT%H:%M:%fZ')
 		),
 		'ultimas_transacoes', json(ultimas_transacoes)
-	) FROM clientes WHERE id = ${CLIENT_ID};" | tap queries.log | sql "${DB_PATH}" | tap queries.log
+	) FROM clientes WHERE id = ${CLIENT_ID};" | sql "${DB_PATH}"
 }
 
 function insert_transaction() {
@@ -133,7 +133,7 @@ function insert_transaction() {
 			SELECT CASE WHEN tipo == 'd' THEN -valor ELSE valor END as valor FROM (
 				SELECT json_extract(value, '$.tipo') tipo, json_extract(value, '$.valor') valor FROM json_each('[${TX}]')
 			)
-		)) >= -limite RETURNING json_object('saldo', saldo, 'limite', limite);" | tap queries.log | sql "${DB_PATH}" | tap queries.log
+		)) >= -limite RETURNING json_object('saldo', saldo, 'limite', limite);" | sql "${DB_PATH}"
 }
 
 function check_client_exists() {
