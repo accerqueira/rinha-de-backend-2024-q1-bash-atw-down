@@ -92,7 +92,7 @@ function sql() {
 		-cmd 'PRAGMA busy_timeout=5000' \
 		-cmd '.timeout 5000' \
 		-cmd '.output stdout' \
-		"${@}"
+		"${@}" 2> >(grep -v 'database is locked' >&2)
 }
 
 function tap() {
