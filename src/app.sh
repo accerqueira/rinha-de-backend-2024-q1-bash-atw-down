@@ -189,4 +189,10 @@ function handle_route_unknown() {
 	http_response 404 '{ "error": "funcionalidade nao encontrada" }'
 }
 
+
+lock_file="/tmp/socat-lock-$(( ( RANDOM % 8 )  + 1 ))"
+
+exec 4< "$lock_file"
+flock 4
 handle_request
+exec 4<&-
