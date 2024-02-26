@@ -1,0 +1,35 @@
+version: "3.5"
+
+services:
+  api:
+    image: accerqueira/rinha-de-backend-2024-q1-bash-api-standalone
+    build:
+      dockerfile: Dockerfile
+      args:
+        - SOURCE_PATH=src/api-standalone.sh
+    environment:
+      - PORT=9999
+      - WORKERS=8
+      - CONNECTIONS=1000
+      - DB_INIT_SCRIPT=
+        CREATE TABLE IF NOT EXISTS clientes (
+        "id" INTEGER PRIMARY KEY NOT NULL,
+        "saldo" INTEGER NOT NULL,
+        "limite" INTEGER NOT NULL,
+        "ultimas_transacoes" JSON NOT NULL DEFAULT ('[]')
+        );
+        DELETE FROM clientes;
+        INSERT INTO clientes VALUES(1,0,100000,'[]');
+        INSERT INTO clientes VALUES(2,0,80000,'[]');
+        INSERT INTO clientes VALUES(3,0,1000000,'[]');
+        INSERT INTO clientes VALUES(4,0,10000000,'[]');
+        INSERT INTO clientes VALUES(5,0,500000,'[]');
+    network_mode: host
+    pid: host
+    deploy:
+      # replicas: 2
+      resources:
+        limits:
+          # cpus: "0.5"
+          memory: "30MB"
+    entrypoint: sh -c 'echo "$${DB_INIT_SCRIPT}" | sqlite3 db.sqlite3 && src/server.sh'

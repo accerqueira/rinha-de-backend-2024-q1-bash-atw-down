@@ -2,6 +2,8 @@
 
 # DEBUG=1
 
+DB_PATH="./db.sqlite3"
+
 
 __FILE__="$(readlink -f ${BASH_SOURCE[0]})"
 __DIR__="${__FILE__%/*}"
@@ -50,7 +52,6 @@ function handle_request() {
 	fi
 	REQUEST_ROUTE="${REQUEST_METHOD} ${REQUEST_PATH//${CLIENT_ID}/:id}"
 
-	# echo "${REQUEST_ROUTE} ${REQUEST_BODY}" >&2
 	case ${REQUEST_ROUTE} in
 		"GET /clientes/:id/extrato")			handle_GET_extrato $CLIENT_ID ;;
 		"POST /clientes/:id/transacoes")	handle_POST_transacoes $CLIENT_ID "${REQUEST_BODY}" ;;
@@ -68,8 +69,6 @@ function http_response() {
 	export TZ=GMT
 	export LC_TIME=POSIX
 
-	# printf "%s %s %s %s\n" "${REQUEST_PATH}" "${REQUEST_BODY}" "${RESPONSE_STATUS}" "${RESPONSE_BODY}" >&2
-
 	printf "HTTP/1.1 %s\r\n" "${RESPONSE_STATUS}"
 	printf "Date: %(%a, %d %b %Y %H:%M:%S GMT)T\r\n"
 	printf "Server: bash\r\n"
@@ -86,30 +85,31 @@ function http_response() {
 }
 
 function sql() {
-	psql --quiet --tuples-only
-	# tee >(sed "s#^#> #" >&2) | psql --quiet --tuples-only | tee >(sed "s#^#< #" >&2)
-	# socat - TCP:${DB_CONNECTION_URL},connect-timeout=60
+	sqlite3 \
+		-cmd '.output /dev/null' \
+		-cmd 'PRAGMA jounal_mode=WAL;' \
+		-cmd 'PRAGMA synchronous=NORMAL;' \
+		-cmd 'PRAGMA busy_timeout=5000' \
+		-cmd '.timeout 5000' \
+		-cmd '.output stdout' \
+		"${@}" 2> >(grep -v 'database is locked' >&2)
+}
+
+function tap() {
+	[[ -n "$DEBUG" ]] && tee -a "${1}" || cat
 }
 
 function get_bank_statement() {
 	local CLIENT_ID=${1}
 
-	echo "SELECT jsonb_build_object(
-		'saldo', jsonb_build_object(
+	echo "SELECT json_object(
+		'saldo', json_object(
 			'total', saldo,
 			'limite', limite,
-			'data_extrato', to_char(now()::timestamp at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+			'data_extrato', strftime('%Y-%m-%dT%H:%M:%fZ')
 		),
-		'ultimas_transacoes', to_jsonb(ultimas_transacoes)
+		'ultimas_transacoes', json(ultimas_transacoes)
 	) FROM clientes WHERE id = ${CLIENT_ID};" | sql "${DB_PATH}"
-	# echo "SELECT json_object(
-	# 	'saldo', json_object(
-	# 		'total', saldo,
-	# 		'limite', limite,
-	# 		'data_extrato', strftime('%Y-%m-%dT%H:%M:%fZ')
-	# 	),
-	# 	'ultimas_transacoes', json(ultimas_transacoes)
-	# ) FROM clientes WHERE id = ${CLIENT_ID};" | sql "${DB_PATH}"
 }
 
 function insert_transaction() {
@@ -117,50 +117,23 @@ function insert_transaction() {
 	local TX="${2//\'/\'\'}"
 
 	echo "UPDATE clientes 
-		SET
-			saldo=saldo + (
-				SELECT
-					CASE WHEN x.tipo = 'd' THEN -x.valor ELSE x.valor END as valor
-				FROM json_to_record('${TX}') as x(valor int, tipo varchar)
-			),
-			ultimas_transacoes=(
-				jsonb_insert(
-					ultimas_transacoes,
-					'{0}',
-					jsonb_set(
-						'${TX}'::jsonb,
-						'{realizada_em}',
-						to_jsonb(to_char(now()::timestamp at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'))
-					)
-				) - 11
+		SET saldo=saldo + (
+			SELECT CASE WHEN tipo == 'd' THEN -valor ELSE valor END as valor FROM (
+				SELECT json_extract(value, '$.tipo') tipo, json_extract(value, '$.valor') valor FROM json_each('[${TX}]')
 			)
-		WHERE
-			id=${CLIENT_ID} AND
-			(saldo + (
-				SELECT
-					CASE WHEN x.tipo = 'd' THEN -x.valor ELSE x.valor END as valor
-				FROM json_to_record('${TX}') as x(valor int, tipo varchar)
-			)) >= -limite
-		RETURNING json_build_object('saldo', saldo, 'limite', limite);" | sql "${DB_PATH}"
-
-	# echo "UPDATE clientes 
-	# 	SET saldo=saldo + (
-	# 		SELECT CASE WHEN tipo == 'd' THEN -valor ELSE valor END as valor FROM (
-	# 			SELECT json_extract(value, '$.tipo') tipo, json_extract(value, '$.valor') valor FROM json_each('[${TX}]')
-	# 		)
-	# 	), ultimas_transacoes=(
-	# 		SELECT json_remove(json_group_array(json(value)), '"'$[10]'"') txs FROM (
-	# 			SELECT id, value FROM (
-	# 				SELECT json_insert(json_group_array(json(value)), '"'$[#]'"', json_set('${TX}', '$.realizada_em', strftime('%Y-%m-%dT%H:%M:%fZ'))) txs FROM (
-	# 					SELECT txs.value FROM clientes c, json_each(c.ultimas_transacoes) txs WHERE c.id=${CLIENT_ID} ORDER BY key DESC
-	# 				)
-	# 			) temp, json_each(temp.txs) ORDER BY key DESC
-	# 		)
-	# 	) WHERE id=${CLIENT_ID} AND (saldo + (
-	# 		SELECT CASE WHEN tipo == 'd' THEN -valor ELSE valor END as valor FROM (
-	# 			SELECT json_extract(value, '$.tipo') tipo, json_extract(value, '$.valor') valor FROM json_each('[${TX}]')
-	# 		)
-	# 	)) >= -limite RETURNING json_object('saldo', saldo, 'limite', limite);" | sql "${DB_PATH}"
+		), ultimas_transacoes=(
+			SELECT json_remove(json_group_array(json(value)), '"'$[10]'"') txs FROM (
+				SELECT id, value FROM (
+					SELECT json_insert(json_group_array(json(value)), '"'$[#]'"', json_set('${TX}', '$.realizada_em', strftime('%Y-%m-%dT%H:%M:%fZ'))) txs FROM (
+						SELECT txs.value FROM clientes c, json_each(c.ultimas_transacoes) txs WHERE c.id=${CLIENT_ID} ORDER BY key DESC
+					)
+				) temp, json_each(temp.txs) ORDER BY key DESC
+			)
+		) WHERE id=${CLIENT_ID} AND (saldo + (
+			SELECT CASE WHEN tipo == 'd' THEN -valor ELSE valor END as valor FROM (
+				SELECT json_extract(value, '$.tipo') tipo, json_extract(value, '$.valor') valor FROM json_each('[${TX}]')
+			)
+		)) >= -limite RETURNING json_object('saldo', saldo, 'limite', limite);" | sql "${DB_PATH}"
 }
 
 function check_client_exists() {
@@ -217,4 +190,9 @@ function handle_route_unknown() {
 }
 
 
+# lock_file="/tmp/socat-lock-$(( ( RANDOM % 8 )  + 1 ))"
+# touch "$lock_file"
+# exec 4< "$lock_file"
+# flock 4
 handle_request
+# exec 4<&-

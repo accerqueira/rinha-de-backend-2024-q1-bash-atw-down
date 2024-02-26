@@ -1,14 +1,12 @@
-CREATE TABLE IF NOT EXISTS clientes (
+CREATE UNLOGGED TABLE IF NOT EXISTS clientes (
   "id" INTEGER PRIMARY KEY NOT NULL,
   "saldo" INTEGER NOT NULL,
   "limite" INTEGER NOT NULL,
-  "ultimas_transacoes" JSON NOT NULL DEFAULT ('[]')
+  "ultimas_transacoes" JSONB NOT NULL DEFAULT '[]'::JSONB
 );
 DELETE FROM clientes;
-INSERT INTO clientes ("id", "limite", "saldo") VALUES
-  (1, 100000, 0),
-  (2, 80000, 0),
-  (3, 1000000, 0),
-  (4, 10000000, 0),
-  (5, 500000, 0);
-
+INSERT INTO clientes VALUES(1,0,100000,'[]');
+INSERT INTO clientes VALUES(2,0,80000,'[]');
+INSERT INTO clientes VALUES(3,0,1000000,'[]');
+INSERT INTO clientes VALUES(4,0,10000000,'[]');
+INSERT INTO clientes VALUES(5,0,500000,'[]');
